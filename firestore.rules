@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Solo la cuenta de la administradora (manu) puede entrar al panel.
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'manu@mmpi-app.com';
+    }
+
+    // Enlace de aplicación: el evaluado solo puede LEERLO por su código (get) y
+    // cerrarlo una única vez (pending -> completed). No puede listar ni ver resultados.
+    match /tests/{id} {
+      allow get: if true;
+      allow list, delete: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.status == 'pending';
+      allow update: if isAdmin() || (
+        resource.data.status == 'pending' &&
+        request.resource.data.status == 'completed' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completedAt'])
+      );
+    }
+
+    // Respuestas: el evaluado solo puede CREARLAS una vez (mientras el enlace esté pendiente).
+    // Solo la administradora puede leerlas.
+    match /respuestas/{id} {
+      allow read, delete: if isAdmin();
+      allow create: if get(/databases/$(database)/documents/tests/$(id)).data.status == 'pending'
+        && request.resource.data.keys().hasOnly(['datos', 'answers', 'completedAt'])
+        && request.resource.data.answers is string
+        && request.resource.data.answers.size() == 338;
+      allow update: if false;
+    }
+  }
+}
