@@ -1,6 +1,6 @@
 // Service worker: guarda la app para abrirla sin conexión. No intercepta Firebase.
-const CACHE = 'mmpi-v1';
-const FILES = ['./', 'index.html', 'manifest.webmanifest', 'css/style.css', 'js/app.js', 'js/model.js', 'js/scoring.js', 'js/pdf.js',
+const CACHE = 'mmpi-v2';
+const FILES = ['./', 'index.html', 'manifest.webmanifest', 'css/style.css', 'js/app.js', 'js/model.js', 'js/scoring.js', 'js/pdf.js', 'js/interpretacion.js',
   'js/store.js', 'js/config.js', 'js/vendor/pdf-lib.min.js', 'icons/icon-192.png', 'icons/icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
