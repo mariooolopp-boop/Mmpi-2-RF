@@ -2,6 +2,7 @@
 // tablas de puntuación natural y transformada, y respuestas V/F de todo el cuestionario.
 import { MODEL } from './model.js';
 import { score, fromString } from './scoring.js';
+import { interpretar } from './interpretacion.js';
 
 const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
 const C = {
@@ -119,6 +120,70 @@ export async function buildPdf({ test, datos, answers: ansStr }) {
   // Detalle de inconsistencia (solo lectura)
   const ex = res.extra['INVER-r'];
   tx(`INVER-r: pares V-V = ${ex.vv}, pares F-F = ${ex.ff}, total = ${ex.total}, total corregido (+11) = ${res.scales['INVER-r'].pd}.`, M, y - 6, 7.5, f, C.grey); y -= 14;
+
+  // ---------- Interpretación por escala (orientativa, según T) ----------
+  newPage();
+  title('INTERPRETACIÓN POR ESCALA  (orientativa, según la puntuación T)');
+  const NC = {
+    verde: rgb(0.20, 0.78, 0.35), amarillo: rgb(1, 0.78, 0.04), rojo: rgb(0.93, 0.23, 0.19),
+    bajo: rgb(0.66, 0.74, 0.82), medio: rgb(0.35, 0.65, 0.90), alto: rgb(0.12, 0.38, 0.75),
+  };
+  const RED = rgb(0.72, 0.1, 0.08);
+  const para = (s, size, color = C.grey, font = f, x = M + 2) => {
+    for (const l of wrap(s, size, W - 2 * M - (x - M) - 2)) { ensure(size + 3); tx(l, x, y - size, size, font, color); y -= size + 2.6; }
+  };
+  para('Clasificación orientativa de visualización (no son puntos de corte oficiales universales). Escalas sustantivas: verde = T menor de 55; amarillo = T de 55 a 64; rojo = T de 65 o más. Las escalas de validez usan criterios propios y las de intereses solo indican grado de preferencia. Esta interpretación automática no es un diagnóstico ni sustituye el juicio clínico: debe contrastarse con otras escalas, la entrevista, la historia y otras fuentes de información.', 7.3);
+  y -= 4;
+  // Alertas
+  const alertas = [];
+  for (const g of MODEL.groups) for (const code of g.codes) {
+    const it = interpretar(code, res.scales[code].t);
+    if (it && it.alerta) alertas.push(code === 'ISU'
+      ? `RIESGO: ISU (T = ${res.scales[code].t}) elevada. Realizar de inmediato una evaluación directa del riesgo suicida.`
+      : `VALIDEZ: ${code} (T = ${res.scales[code].t}) alcanza el criterio de alerta. Revisar el protocolo antes de interpretar las demás escalas.`);
+  }
+  if (alertas.length) {
+    const lines = alertas.flatMap(a => wrap(a, 8, W - 2 * M - 20));
+    const bh = lines.length * 10.5 + 18;
+    ensure(bh + 6);
+    page.drawRectangle({ x: M, y: y - bh, width: W - 2 * M, height: bh, color: rgb(1, 0.93, 0.92), borderColor: NC.rojo, borderWidth: 1 });
+    tx('ALERTAS', M + 8, y - 12, 8.5, fb, RED);
+    lines.forEach((l, i) => tx(l, M + 8, y - 24 - i * 10.5, 8, fb, RED));
+    y -= bh + 8;
+  }
+  // Leyenda
+  ensure(16);
+  let lx = M + 2;
+  [['verde', 'Verde'], ['amarillo', 'Amarillo'], ['rojo', 'Rojo']].forEach(([k, n]) => {
+    page.drawCircle({ x: lx + 4, y: y - 5, size: 4, color: NC[k] }); tx(n, lx + 11, y - 8, 7.5, f, C.grey); lx += 11 + tw(n, 7.5) + 14;
+  });
+  y -= 16;
+  const SEC = { 'VALIDEZ': 'Escalas de validez', 'D. GLOBALES': 'Escalas globales (segundo orden)', 'CLÍNICAS REESTRUCTURADAS': 'Escalas clínicas reestructuradas',
+    'PROBLEMAS ESPECÍFICOS': 'Escalas de problemas específicos', '5 PERSONALIDAD PATOLÓGICA': 'Escalas de personalidad patológica (PSY-5)' };
+  let lastS = '';
+  for (const g of MODEL.groups) {
+    if (g.sec !== lastS) { ensure(34); y -= 4; tx(SEC[g.sec] || g.sec, M + 2, y - 10, 10, fb, C.blue); y -= 16; lastS = g.sec; }
+    if (g.sub) { ensure(26); tx(g.sub, M + 4, y - 8, 8.5, fb, C.grey); y -= 12; }
+    if (g.sub === 'Intereses') para('En estas escalas el color indica el grado de preferencia, no gravedad clínica.', 7, C.grey, f, M + 4);
+    for (const code of g.codes) {
+      const sc = MODEL.scales[code], r = res.scales[code], it = interpretar(code, r.t);
+      if (!it) continue;
+      const body = wrap(it.texto + (it.extra ? ' ' + it.extra : ''), 7.8, W - 2 * M - 26);
+      const crit = wrap(it.criterio, 6.6, W - 2 * M - 26);
+      ensure(16 + body.length * 9.6 + crit.length * 8.2 + 8);
+      page.drawCircle({ x: M + 9, y: y - 5.5, size: 4.6, color: NC[it.color] });
+      tx(code, M + 20, y - 8, 8.5, fb, C.blue);
+      const right = `PD ${r.pd}   T ${r.t}   ${it.etiqueta}`;
+      tx(right, W - M - tw(right, 8, fb) - 2, y - 8, 8, fb, C.ink);
+      const nm = wrap(sc.name, 7.2, W - 2 * M - 26 - tw(code, 8.5, fb) - tw(right, 8, fb) - 22)[0];
+      tx(nm, M + 20 + tw(code, 8.5, fb) + 6, y - 8, 7.2, f, C.grey);
+      y -= 13;
+      body.forEach(l => { tx(l, M + 20, y - 7, 7.8, f, C.ink); y -= 9.6; });
+      crit.forEach(l => { tx(l, M + 20, y - 6, 6.6, f, C.grey); y -= 8.2; });
+      if (it.alerta) { page.drawLine({ start: { x: M + 20, y: y - 1 }, end: { x: W - M, y: y - 1 }, thickness: 0.4, color: NC.rojo }); }
+      y -= 6;
+    }
+  }
 
   // ---------- Respuestas ----------
   newPage();
