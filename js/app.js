@@ -30,11 +30,15 @@ window.addEventListener('hashchange', route);
 /* ---------------- Login ---------------- */
 function viewLogin() {
   $app.innerHTML = `
-  <div class="card" style="max-width:420px;margin:12vh auto 0">
-    <div class="center"><div class="brand" style="font-size:1.8rem">MMPI-2-RF</div><p class="muted small">Acceso de la persona responsable de la aplicación</p></div>
-    <form id="f"><label>Usuario</label><input id="u" autocomplete="username" autocapitalize="none" required>
-    <label>Contraseña</label><input id="p" type="password" autocomplete="current-password" required>
-    <div id="e" class="err"></div><button class="btn" style="width:100%;margin-top:6px">Entrar</button></form>
+  <div class="card login">
+    <div class="avatar" aria-hidden="true"><svg viewBox="0 0 100 100"><ellipse cx="50" cy="38" rx="15" ry="18"/><path d="M18 100C18 72 34 62 50 62s32 10 32 38z"/></svg></div>
+    <div class="center"><h1>MMPI-2-RF</h1><p class="muted small">Acceso de la persona responsable de la aplicación</p></div>
+    <form id="f">
+      <div class="field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
+        <label class="sr" for="u">Usuario</label><input id="u" placeholder="Usuario" autocomplete="username" autocapitalize="none" required></div>
+      <div class="field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        <label class="sr" for="p">Contraseña</label><input id="p" type="password" placeholder="Contraseña" autocomplete="current-password" required></div>
+      <div id="e" class="err"></div><button class="btn" style="width:100%;margin-top:14px;padding:14px">Entrar</button></form>
     ${MODE === 'local' ? '<p class="small muted center" style="margin-top:14px">Modo local de pruebas (sin Firebase configurado).</p>' : ''}
   </div>`;
   document.getElementById('f').onsubmit = async ev => {
@@ -203,9 +207,53 @@ async function viewRespondent(token) {
   st.page >= 0 && st.datos ? page() : intro();
 }
 
+/* ---------------- Actualización automática ---------------- */
+// Cada vez que publiques cambios en GitHub, la app abierta los detecta sola y se recarga
+// (sin cerrar el navegador). Espera si la persona está escribiendo o se está generando el PDF.
+const WATCH = ['index.html', 'css/style.css', 'js/app.js', 'js/model.js', 'js/scoring.js', 'js/store.js', 'js/pdf.js', 'js/interpretacion.js', 'js/config.js', 'manifest.webmanifest'];
+const hash = t => { let h = 2166136261; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + t.length; };
+async function signature() {
+  try {
+    const parts = await Promise.all(WATCH.map(async f => { const r = await fetch(f, { cache: 'no-cache' }); if (!r.ok) throw 0; return hash(await r.text()); }));
+    return parts.join('|');
+  } catch { return null; }   // sin conexión: no hace nada
+}
+let baseline = null, lastCheck = 0, reloading = false;
+const busy = () => {
+  const a = document.activeElement, df = document.getElementById('df');
+  return (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) || document.getElementById('pdf')?.disabled
+    || document.getElementById('next')?.textContent === 'Enviando…' || (df && [...df.elements].some(e => e.value && e.tagName !== 'BUTTON'));
+};
+function applyUpdate() {
+  if (reloading) return;
+  if (busy()) { setTimeout(applyUpdate, 5000); return; }
+  reloading = true; toast('Actualizando la aplicación…'); setTimeout(() => location.reload(), 700);
+}
+async function checkUpdate(force) {
+  if (reloading || document.hidden || (!force && Date.now() - lastCheck < 20000)) return;
+  lastCheck = Date.now();
+  const s = await signature(); if (!s) return;
+  if (baseline === null) baseline = s; else if (s !== baseline) applyUpdate();
+}
+function watchUpdates() {
+  checkUpdate(true);
+  setInterval(checkUpdate, 3 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+  window.addEventListener('focus', () => checkUpdate());
+  window.addEventListener('online', () => checkUpdate(true));
+}
+
 /* ---------------- Arranque ---------------- */
 (async () => {
   try { await store.init(); } catch (e) { console.error(e); }
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    const had = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+      setInterval(() => reg.update().catch(() => {}), 3 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+    }).catch(() => {});
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (had) applyUpdate(); });
+  }
   route();
+  watchUpdates();
 })();
